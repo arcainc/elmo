@@ -1,5 +1,5 @@
 /**
- * /accept-invitation/:invitationId - Accept a team invitation (cloud only)
+ * /accept-invitation/:invitationId - Accept a team invitation
  *
  * Sits under _authed so an invitee without a session is sent to login with
  * returnTo, and the login → register → verify chain lands them back here.
