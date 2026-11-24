@@ -193,6 +193,13 @@ export const ENV_REGISTRY: EnvVarSpec[] = [
 			"OpenRouter API key. Without TYPESAFE_API_KEY, the worker also calls Jev through OpenRouter with it to judge mentions and sentiment.",
 	},
 	{
+		name: "RAMP_ROUTER_API_KEY",
+		scope: "server",
+		requiredBy: "dynamic-scrape-targets",
+		provider: "ramp-router",
+		description: "Ramp Router API key for tracking, structured research, and Jev mention judging.",
+	},
+	{
 		name: "ONBOARDING_LLM_TARGET",
 		scope: "server",
 		requiredBy: "optional",
@@ -202,10 +209,9 @@ export const ENV_REGISTRY: EnvVarSpec[] = [
 	{
 		name: "TYPESAFE_API_KEY",
 		scope: "server",
-		// The worker refuses to start without it or OPENROUTER_API_KEY; the web app never uses it.
 		requiredBy: "optional",
 		description:
-			"API key for Jev (typesafe.ai), which judges which answers mention a brand or competitor, and the sentiment toward each. The worker needs this or OPENROUTER_API_KEY, and calls TypeSafe directly when both are set.",
+			"API key for Jev (typesafe.ai). The worker calls TypeSafe directly when set, otherwise it uses Ramp Router or OpenRouter.",
 	},
 	{
 		name: "REPROCESS_DAYS",
@@ -464,7 +470,13 @@ export const ENV_REGISTRY: EnvVarSpec[] = [
  * OpenAI first, as the cheapest with the best recall in compare-onboarding runs,
  * then the same model via OpenRouter. Here so startup validation can require one.
  */
-export const RESEARCH_PROVIDER_PREFERENCE = ["openai-api", "openrouter", "anthropic-api", "mistral-api"] as const;
+export const RESEARCH_PROVIDER_PREFERENCE = [
+	"openai-api",
+	"openrouter",
+	"anthropic-api",
+	"mistral-api",
+	"ramp-router",
+] as const;
 
 export const CREDENTIAL_ENV_NAMES: ReadonlySet<string> = new Set(
 	ENV_REGISTRY.filter((spec) => spec.requiredBy === "dynamic-scrape-targets" && spec.provider).map((spec) => spec.name),

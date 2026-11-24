@@ -5,7 +5,7 @@ import { cloro } from "./registry/cloro";
 import { dataforseo } from "./registry/dataforseo";
 import { mistralApi } from "./registry/mistral-api";
 import { olostep } from "./registry/olostep";
-import { openaiApi } from "./registry/openai-api";
+import { openaiApi, rampRouter } from "./registry/openai-api";
 import { openrouter } from "./registry/openrouter";
 import { oxylabs } from "./registry/oxylabs";
 import { searchapi } from "./registry/searchapi";
@@ -32,6 +32,7 @@ const providerMap: Record<string, Provider> = {
 	oxylabs,
 	cloro,
 	"openai-api": openaiApi,
+	"ramp-router": rampRouter,
 	"anthropic-api": anthropicApi,
 	"mistral-api": mistralApi,
 	dataforseo,

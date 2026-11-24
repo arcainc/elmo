@@ -163,7 +163,7 @@ describe("createMentionAnalyzer", () => {
 	const noOpenRouter = () => undefined;
 	const openRouter = () => "or-key";
 
-	it("refuses to run without a key, naming both that would do", () => {
+	it("refuses to run without a key, naming the accepted keys", () => {
 		expect(() => createMentionAnalyzer("", noOpenRouter)).toThrow(/TYPESAFE_API_KEY.*OPENROUTER_API_KEY/);
 		expect(() => createMentionAnalyzer("", () => "  ")).toThrow("OPENROUTER_API_KEY");
 	});
@@ -209,6 +209,17 @@ describe("createMentionAnalyzer", () => {
 			model: JEV_MODEL,
 			authorization: "Bearer ts-key",
 		});
+	});
+
+	it("calls Ramp Router with the pinned Jev model and does not fall back to OpenRouter", async () => {
+		const call = await firstCall(() => createMentionAnalyzer("", openRouter, () => "router-key"));
+		expect(call).toMatchObject({
+			url: "https://api.router.com/v1/systemone",
+			model: JEV_MODEL,
+			authorization: "Bearer router-key",
+			calls: 1,
+		});
+		expect(String(call.error)).toContain("RAMP_ROUTER_API_KEY was rejected");
 	});
 
 	it("stops at a rejected OpenRouter key without trying TypeSafe", async () => {

@@ -69,6 +69,7 @@ export function validateScrapeTargets(
 		}
 		if (
 			(config.provider === "openai-api" ||
+				config.provider === "ramp-router" ||
 				config.provider === "anthropic-api" ||
 				config.provider === "mistral-api" ||
 				config.provider === "openrouter") &&

@@ -1,6 +1,8 @@
 # Elmo 
 # Supports: web app (Nitro server) and worker
 
+ARG ELMO_IMAGE_TARGET=worker
+
 # Base stage with Node.js
 FROM node:24-alpine AS base
 RUN corepack enable pnpm
@@ -111,3 +113,5 @@ USER worker
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["./node_modules/.bin/tsx", "--import", "./src/instrument.ts", "src/index.ts"]
+
+FROM ${ELMO_IMAGE_TARGET} AS railway

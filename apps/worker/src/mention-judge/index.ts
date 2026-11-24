@@ -8,8 +8,9 @@ let current: MentionAnalyzer | undefined;
 export function configureMentionAnalyzer(
 	apiKey = process.env.TYPESAFE_API_KEY,
 	openRouterKey: () => string | undefined = () => getCredential("OPENROUTER_API_KEY"),
+	rampRouterKey: () => string | undefined = () => getCredential("RAMP_ROUTER_API_KEY"),
 ): MentionAnalyzer {
-	current = createMentionAnalyzer(apiKey, openRouterKey);
+	current = createMentionAnalyzer(apiKey, openRouterKey, rampRouterKey);
 	return current;
 }
 

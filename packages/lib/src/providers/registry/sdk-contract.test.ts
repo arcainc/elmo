@@ -12,17 +12,18 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { extractCitationsFromAnthropic, extractRun, extractTextFromAnthropic } from "../../text-extraction";
 import { anthropicApi } from "./anthropic-api";
-import { openaiApi } from "./openai-api";
+import { openaiApi, rampRouter } from "./openai-api";
 
 // Mock only the *model factory*. The real `ai` package runs, so this exercises
 // generateText / Output.object / result.sources against the installed SDK.
-const model = vi.hoisted(() => ({ current: null as any }));
+const model = vi.hoisted(() => ({ current: null as any, createOpenAI: vi.fn() }));
 
 vi.mock("@ai-sdk/openai", () => {
 	const openai: any = (id: string) => model.current;
 	openai.responses = () => model.current;
 	openai.tools = { webSearch: (o: any) => ({ __webSearch: o }) };
-	return { openai, createOpenAI: () => openai };
+	model.createOpenAI.mockReturnValue(openai);
+	return { openai, createOpenAI: model.createOpenAI };
 });
 
 vi.mock("@ai-sdk/anthropic", () => {
@@ -88,6 +89,10 @@ describe("installed ai SDK contract: openai-api run()", () => {
 			{ url: "https://example.com/a", title: "Example A", domain: "example.com", citationIndex: 0 },
 		]);
 		expect(res.webQueries).toEqual(["elmo aeo"]);
+
+		const viaRouter = await rampRouter.run("chatgpt", "prompt", { webSearch: true, version: "gpt-5-mini" });
+		expect(model.createOpenAI).toHaveBeenLastCalledWith({ apiKey: "test-key", baseURL: "https://api.router.com/v1" });
+		expect(extractRun(viaRouter.rawOutput, "ramp-router")).toEqual(extractRun(res.rawOutput, "openai-api"));
 	});
 });
 

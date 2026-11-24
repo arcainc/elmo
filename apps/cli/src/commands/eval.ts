@@ -122,7 +122,11 @@ async function runEval(positionalPrompts: string[], options: EvalOptions): Promi
 	const judge = brand.mentionBrand
 		? {
 				config: { brand: brand.mentionBrand, competitors: toMentionCompetitors(brand.competitors) },
-				analyzer: createMentionAnalyzer(process.env.TYPESAFE_API_KEY, () => process.env.OPENROUTER_API_KEY),
+				analyzer: createMentionAnalyzer(
+					process.env.TYPESAFE_API_KEY,
+					() => process.env.OPENROUTER_API_KEY,
+					() => process.env.RAMP_ROUTER_API_KEY,
+				),
 			}
 		: undefined;
 	const reportCompetitors: ReportCompetitor[] = toReportCompetitors(brand.competitors);

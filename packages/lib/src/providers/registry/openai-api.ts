@@ -23,12 +23,6 @@ import { nonEmptyStrings } from "./scrape-shared";
 
 const DEFAULT_RESEARCH_MODEL = "gpt-6-luna";
 
-function getOpenAIResponsesModel(model: string) {
-	const apiKey = getCredential("OPENAI_API_KEY");
-	const provider = apiKey ? createOpenAI({ apiKey }) : openai;
-	return provider.responses(model);
-}
-
 type WebSearchOutput = InferToolOutput<ReturnType<typeof openai.tools.webSearch>>;
 
 /**
@@ -55,13 +49,17 @@ function rebuildRawOutput(result: { text: string; sources: readonly { sourceType
 	};
 }
 
-async function runOpenAI(prompt: string, model: string, options?: ProviderOptions): Promise<ScrapeResult> {
+async function runResponses(
+	providerId: string,
+	model: ReturnType<typeof openai.responses>,
+	version: string,
+	prompt: string,
+	options?: ProviderOptions,
+): Promise<ScrapeResult> {
 	const webSearch = options?.webSearch === true;
 
 	const result = await generateText({
-		// Routed through getOpenAIResponsesModel (not the bare `openai` global,
-		// which reads process.env internally) so overlay credentials apply here.
-		model: getOpenAIResponsesModel(model),
+		model,
 		prompt,
 		maxOutputTokens: API_PROVIDER_MAX_OUTPUT_TOKENS["openai-api"],
 		toolChoice: webSearch ? "auto" : "none",
@@ -73,7 +71,7 @@ async function runOpenAI(prompt: string, model: string, options?: ProviderOption
 			: {}),
 	});
 
-	warnIfOutputCapped("openai-api", model, result.finishReason);
+	warnIfOutputCapped(providerId, version, result.finishReason);
 
 	// The payload's web_search_call items are the only record of what the model
 	// searched; the rebuilt fallback carries the answer and citations but none.
@@ -87,40 +85,56 @@ async function runOpenAI(prompt: string, model: string, options?: ProviderOption
 	return {
 		rawOutput,
 		webQueries: reportedWebQueries(webQueries, { webSearch: options?.webSearch ?? false }),
-		modelVersion: model,
+		modelVersion: version,
 	};
 }
 
-export const openaiApi: Provider = {
-	id: "openai-api",
-	name: "OpenAI API",
-	access: "api",
-	docsAnchor: "direct-model-apis",
+function responsesProvider(id: string, name: string, credential: string, baseURL?: string): Provider {
+	function responsesModel(version: string) {
+		const apiKey = getCredential(credential);
+		if (baseURL && !apiKey) throw new Error(`${credential} is required for ${name}`);
+		const provider = apiKey ? createOpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) }) : openai;
+		return provider.responses(version);
+	}
 
-	isConfigured: configuredWhen("OPENAI_API_KEY"),
+	return {
+		id,
+		name,
+		access: "api",
+		docsAnchor: "direct-model-apis",
+		isConfigured: configuredWhen(credential),
 
-	async run(model: string, prompt: string, options?: ProviderOptions): Promise<ScrapeResult> {
-		const version = options?.version ?? DEFAULT_RESEARCH_MODEL;
-		return runOpenAI(prompt, version, options);
-	},
+		async run(_model: string, prompt: string, options?: ProviderOptions): Promise<ScrapeResult> {
+			const version = options?.version ?? DEFAULT_RESEARCH_MODEL;
+			return runResponses(id, responsesModel(version), version, prompt, options);
+		},
 
-	async runStructuredResearch<T>({
-		prompt,
-		schema,
-		webSearch = true,
-	}: StructuredResearchOptions<T>): Promise<StructuredResearchResult<T>> {
-		const object = await structuredResearch(getOpenAIResponsesModel(DEFAULT_RESEARCH_MODEL), {
+		async runStructuredResearch<T>({
 			prompt,
 			schema,
-			...(webSearch
-				? {
-						tools: {
-							web_search: openai.tools.webSearch({ searchContextSize: RESEARCH_WEB_SEARCH_CONTEXT_SIZE }),
-						},
-						providerOptions: { openai: { maxToolCalls: RESEARCH_WEB_SEARCH_MAX_USES } },
-					}
-				: {}),
-		});
-		return { object, modelVersion: DEFAULT_RESEARCH_MODEL };
-	},
-};
+			webSearch = true,
+		}: StructuredResearchOptions<T>): Promise<StructuredResearchResult<T>> {
+			const object = await structuredResearch(responsesModel(DEFAULT_RESEARCH_MODEL), {
+				prompt,
+				schema,
+				...(webSearch
+					? {
+							tools: {
+								web_search: openai.tools.webSearch({ searchContextSize: RESEARCH_WEB_SEARCH_CONTEXT_SIZE }),
+							},
+							providerOptions: { openai: { maxToolCalls: RESEARCH_WEB_SEARCH_MAX_USES } },
+						}
+					: {}),
+			});
+			return { object, modelVersion: DEFAULT_RESEARCH_MODEL };
+		},
+	};
+}
+
+export const openaiApi = responsesProvider("openai-api", "OpenAI API", "OPENAI_API_KEY");
+export const rampRouter = responsesProvider(
+	"ramp-router",
+	"Ramp Router",
+	"RAMP_ROUTER_API_KEY",
+	"https://api.router.com/v1",
+);

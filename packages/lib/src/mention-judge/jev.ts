@@ -10,6 +10,7 @@ export const JEV_MODEL = "jev-1.13.0";
 export const OPENROUTER_JEV_MODEL = "typesafe/jev-1.13";
 const TYPESAFE_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/systemone";
+const RAMP_ROUTER_ENDPOINT = "https://api.router.com/v1/systemone";
 const TIMEOUT_MS = 30_000;
 
 export interface JevChoiceQuestion {
@@ -43,8 +44,9 @@ export class RateLimited extends Error {
 	constructor(
 		readonly retryAfterMs: number,
 		detail: string,
+		status = 429,
 	) {
-		super(`Jev rate limited the request (HTTP 429): ${detail}`);
+		super(`Jev rate limited the request (HTTP ${status}): ${detail}`);
 	}
 }
 
@@ -65,6 +67,19 @@ export function openRouterTransport(apiKey: () => string | undefined, fetchImpl:
 			return key;
 		},
 		"OPENROUTER_API_KEY",
+		fetchImpl,
+	);
+}
+
+export function rampRouterTransport(apiKey: () => string | undefined, fetchImpl: typeof fetch = fetch): JevTransport {
+	return systemOneTransport(
+		RAMP_ROUTER_ENDPOINT,
+		() => {
+			const key = apiKey();
+			if (!key) throw new Error("RAMP_ROUTER_API_KEY is no longer set; Elmo calls Jev through Ramp Router with it");
+			return key;
+		},
+		"RAMP_ROUTER_API_KEY",
 		fetchImpl,
 	);
 }
@@ -97,8 +112,12 @@ function systemOneTransport(
 async function failure(response: Response, keyName: string): Promise<Error> {
 	const body = await response.text().catch(() => "");
 	const detail = body.slice(0, 300);
-	if (response.status === 429)
-		return new RateLimited(Math.min(Number(response.headers.get("retry-after")) * 1000 || 1000, 60_000), detail);
+	if (response.status === 429 || response.status === 529)
+		return new RateLimited(
+			Math.min(Number(response.headers.get("retry-after")) * 1000 || 1000, 60_000),
+			detail,
+			response.status,
+		);
 	if (response.status === 400 && body.includes("max_tokens_exceeded"))
 		return new TooLarge(`Jev found the request too large (HTTP 400): ${detail}`);
 	// OpenRouter answers 402 when the account is out of credit.

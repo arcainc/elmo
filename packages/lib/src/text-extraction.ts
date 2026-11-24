@@ -617,6 +617,7 @@ const DATAFORSEO: Extractor = { text: extractTextFromDataforseo, citations: extr
 /** By provider (how the data was fetched), or by engine for runs that don't name one. */
 const EXTRACTORS: Record<string, Extractor> = {
 	"openai-api": OPENAI,
+	"ramp-router": OPENAI,
 	openai: OPENAI,
 	chatgpt: OPENAI,
 	"anthropic-api": ANTHROPIC,

@@ -17,6 +17,7 @@ import {
 	MAX_IN_FLIGHT,
 	OPENROUTER_JEV_MODEL,
 	openRouterTransport,
+	rampRouterTransport,
 	stubTransport,
 	TooLarge,
 	typesafeTransport,
@@ -266,13 +267,13 @@ export function jevAnalyzer(
 }
 
 /**
- * A TypeSafe key wins over an OpenRouter one, so setting OPENROUTER_API_KEY for scraping never
- * moves an existing deployment's judge or its bill. The choice is made once: a failing gateway
- * never falls back to the other, which would bill an account the operator didn't pick.
+ * A TypeSafe key takes precedence over gateways. Pick the transport at startup so a gateway
+ * failure can't bill a different account.
  */
 export function createMentionAnalyzer(
 	apiKey: string | undefined,
 	openRouterKey: () => string | undefined,
+	rampRouterKey: () => string | undefined = () => undefined,
 ): MentionAnalyzer {
 	if (apiKey?.trim() === "stub") {
 		console.warn(
@@ -281,6 +282,10 @@ export function createMentionAnalyzer(
 		return jevAnalyzer(stubTransport, 8, "stub");
 	}
 	if (apiKey?.trim()) return jevAnalyzer(adaptivePool(typesafeTransport(apiKey.trim())), MAX_IN_FLIGHT);
+	if (rampRouterKey()?.trim()) {
+		console.log("[mention-judge] Calling Jev through Ramp Router.");
+		return jevAnalyzer(adaptivePool(rampRouterTransport(() => rampRouterKey()?.trim())), MAX_IN_FLIGHT);
+	}
 	if (openRouterKey()?.trim()) {
 		console.log("[mention-judge] No TYPESAFE_API_KEY: calling Jev through OpenRouter, billed to OPENROUTER_API_KEY.");
 		return jevAnalyzer(
@@ -291,6 +296,6 @@ export function createMentionAnalyzer(
 		);
 	}
 	throw new Error(
-		"Elmo judges mentions and sentiment with Jev: set TYPESAFE_API_KEY, or OPENROUTER_API_KEY to call Jev through OpenRouter",
+		"Elmo judges mentions and sentiment with Jev: set TYPESAFE_API_KEY, RAMP_ROUTER_API_KEY, or OPENROUTER_API_KEY",
 	);
 }
