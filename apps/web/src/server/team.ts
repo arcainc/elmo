@@ -1,11 +1,13 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getRequestHeaders } from "@tanstack/react-start/server";
+import { isOrgAdminRole } from "@workspace/config/roles";
 import { getDeployment } from "@workspace/deployment";
 import { db } from "@workspace/lib/db/db";
 import { invitation, member, organization, user } from "@workspace/lib/db/schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 import { z } from "zod";
 import { requireAuthSession, requireOrganization } from "@/lib/auth/helpers";
+import { createLocalInvitationUrl } from "@/lib/auth/local-invitations";
 import { auth } from "@/lib/auth/server";
 
 function requireTeamInvites(): void {
@@ -18,6 +20,8 @@ export type TeamData = {
 	members: { id: string; role: string; userId: string; name: string; email: string; createdAt: Date }[];
 	invitations: { id: string; email: string; role: string | null; expiresAt: Date }[];
 	currentUserId: string;
+	canManageTeam: boolean;
+	sharesInviteLinks: boolean;
 	organization: { id: string; name: string };
 };
 
@@ -27,6 +31,7 @@ export const listTeamFn = createServerFn({ method: "GET" })
 		requireTeamInvites();
 		const session = await requireAuthSession();
 		const org = await requireOrganization(session.user.id, data.organizationId);
+		const canManageTeam = isOrgAdminRole(org.role);
 
 		const [members, invitations] = await Promise.all([
 			db
@@ -42,24 +47,33 @@ export const listTeamFn = createServerFn({ method: "GET" })
 				.innerJoin(user, eq(member.userId, user.id))
 				.where(eq(member.organizationId, org.id)),
 
-			db
-				.select({
-					id: invitation.id,
-					email: invitation.email,
-					role: invitation.role,
-					expiresAt: invitation.expiresAt,
-				})
-				.from(invitation)
-				.where(and(eq(invitation.organizationId, org.id), eq(invitation.status, "pending"))),
+			canManageTeam
+				? db
+						.select({
+							id: invitation.id,
+							email: invitation.email,
+							role: invitation.role,
+							expiresAt: invitation.expiresAt,
+						})
+						.from(invitation)
+						.where(and(eq(invitation.organizationId, org.id), eq(invitation.status, "pending")))
+				: [],
 		]);
 
 		return {
 			members,
 			invitations,
 			currentUserId: session.user.id,
+			canManageTeam,
+			sharesInviteLinks: getDeployment().mode === "local",
 			organization: { id: org.id, name: org.name },
 		};
 	});
+
+async function localInvitationUrl(invitationId: string): Promise<string> {
+	const { secret, baseURL } = await auth.$context;
+	return createLocalInvitationUrl(invitationId, secret, baseURL);
+}
 
 export const inviteTeamMemberFn = createServerFn({ method: "POST" })
 	.validator(
@@ -74,12 +88,40 @@ export const inviteTeamMemberFn = createServerFn({ method: "POST" })
 		const session = await requireAuthSession();
 		const org = await requireOrganization(session.user.id, data.organizationId);
 
-		await auth.api.createInvitation({
+		const created = await auth.api.createInvitation({
 			body: { email: data.email, role: data.role, organizationId: org.id },
 			headers: getRequestHeaders(),
 		});
 
-		return { success: true };
+		return {
+			id: created.id,
+			inviteUrl: getDeployment().mode === "local" ? await localInvitationUrl(created.id) : null,
+		};
+	});
+
+export const getShareableInvitationLinkFn = createServerFn({ method: "POST" })
+	.validator(z.object({ organizationId: z.string(), invitationId: z.string() }))
+	.handler(async ({ data }) => {
+		requireTeamInvites();
+		if (getDeployment().mode !== "local") throw new Error("This deployment sends invitations by email");
+		const session = await requireAuthSession();
+		const org = await requireOrganization(session.user.id, data.organizationId);
+		if (!isOrgAdminRole(org.role)) throw new Error("Only organization admins can share invitation links");
+
+		const [pending] = await db
+			.select({ id: invitation.id })
+			.from(invitation)
+			.where(
+				and(
+					eq(invitation.id, data.invitationId),
+					eq(invitation.organizationId, org.id),
+					eq(invitation.status, "pending"),
+					gt(invitation.expiresAt, new Date()),
+				),
+			)
+			.limit(1);
+		if (!pending) throw new Error("This invitation is no longer available");
+		return { inviteUrl: await localInvitationUrl(pending.id) };
 	});
 
 export const cancelInvitationFn = createServerFn({ method: "POST" })

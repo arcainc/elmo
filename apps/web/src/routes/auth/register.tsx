@@ -1,7 +1,7 @@
 /**
  * /auth/register - Account registration page
  *
- * Available in local mode for the single bootstrap signup and in cloud mode
+ * Available in local mode for bootstrap and invited teammates and in cloud mode
  * for public self-serve signup. Cloud requires email verification before
  * sign-in and also offers Google OAuth.
  */
@@ -16,13 +16,14 @@ import { Button } from "@workspace/ui/components/button";
 import { Input } from "@workspace/ui/components/input";
 import { Label } from "@workspace/ui/components/label";
 import { Separator } from "@workspace/ui/components/separator";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AuthSplitLayout } from "@/components/auth/auth-split-layout";
 import { SalesFooterLinks, SalesPanel } from "@/components/auth/sales-panel";
 import FullPageCard from "@/components/full-page-card";
 import { LegalConsentNotice } from "@/components/legal-consent-notice";
 import { CAPTCHA_FAILED_MESSAGE, CaptchaError, isCaptchaRejection, useTurnstile } from "@/hooks/use-turnstile";
 import { type AttributionParams, attributionParams } from "@/lib/attribution";
+import { INVITE_SIGNUP_HEADER, parseInviteSignupToken } from "@/lib/auth/invite-signup";
 import { safeReturnTo } from "@/lib/return-to";
 import { buildTitle, getAppName } from "@/lib/route-head";
 
@@ -45,15 +46,30 @@ function RegisterPage() {
 	const { returnTo } = search;
 	const context = useRouteContext({ strict: false }) as { clientConfig?: ClientConfig };
 	const canRegister = context.clientConfig?.canRegister ?? false;
+	const canRegisterByInvite = context.clientConfig?.mode === "local" && context.clientConfig.features.teamInvites;
+	const [invite, setInvite] = useState<string>();
+	const inviteRead = useRef(false);
 
-	if (!canRegister) {
-		window.location.href = "/auth/login";
-		return null;
-	}
+	useEffect(() => {
+		if (canRegister || inviteRead.current) return;
+		const token = new URLSearchParams(window.location.hash.slice(1)).get("invite") ?? undefined;
+		if (canRegisterByInvite && parseInviteSignupToken(token)) {
+			inviteRead.current = true;
+			setInvite(token);
+			// Keep the signup credential out of the page URL seen by client-side analytics.
+			window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
+		} else {
+			window.location.replace("/auth/login");
+		}
+	}, [canRegister, canRegisterByInvite]);
+
+	const parsedInvite = parseInviteSignupToken(invite);
+	if (!canRegister && !parsedInvite) return null;
 
 	return (
 		<RegisterForm
-			returnTo={returnTo}
+			returnTo={parsedInvite ? `/accept-invitation/${parsedInvite.invitationId}` : returnTo}
+			invite={invite}
 			attribution={attributionParams(search)}
 			isCloud={context.clientConfig?.mode === "cloud"}
 			hasUsers={context.clientConfig?.hasUsers ?? false}
@@ -63,11 +79,13 @@ function RegisterPage() {
 
 export function RegisterForm({
 	returnTo,
+	invite,
 	attribution,
 	isCloud,
 	hasUsers,
 }: {
 	returnTo?: string;
+	invite?: string;
 	attribution?: AttributionParams;
 	isCloud?: boolean;
 	/** A local instance before its bootstrap signup has nowhere to send an existing account. */
@@ -82,6 +100,7 @@ export function RegisterForm({
 	const [pendingVerification, setPendingVerification] = useState(false);
 	const turnstile = useTurnstile();
 	const source = isCloud ? "cloud-signup" : "self-hosted-signup";
+	const inviteHeaders = invite ? { [INVITE_SIGNUP_HEADER]: invite } : undefined;
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
@@ -94,26 +113,25 @@ export function RegisterForm({
 				password,
 				name,
 				...(isCloud && { callbackURL: safeReturnTo(returnTo) }),
-				fetchOptions: { headers: await turnstile.getCaptchaHeaders() },
+				fetchOptions: { headers: { ...(await turnstile.getCaptchaHeaders()), ...inviteHeaders } },
 			});
 
 			if (result.error) {
 				setError(
 					isCaptchaRejection(result.error) ? CAPTCHA_FAILED_MESSAGE : (result.error.message ?? "Registration failed"),
 				);
-				setLoading(false);
 				return;
 			}
 
 			if (isCloud) {
 				setPendingVerification(true);
-				setLoading(false);
 				return;
 			}
 
-			navigate({ to: returnTo ?? "/app" });
+			await navigate({ to: safeReturnTo(returnTo), reloadDocument: !!invite, replace: !!invite });
 		} catch (err) {
 			setError(err instanceof CaptchaError ? err.message : "Something went wrong. Please try again.");
+		} finally {
 			setLoading(false);
 		}
 	}
@@ -122,17 +140,8 @@ export function RegisterForm({
 		return <CheckYourEmail email={email} returnTo={returnTo} />;
 	}
 
-	return (
-		<AuthSplitLayout
-			title={isCloud ? "Start tracking your AI visibility" : "Create your admin account"}
-			subtitle={
-				isCloud
-					? `Plans start at $${CLOUD_ENTRY_PRICE_USD}/mo. Cancel any time.`
-					: "This is the owner account for your self-hosted instance."
-			}
-			pitch={<SalesPanel variant={isCloud ? "cloud" : "self-hosted"} source={source} />}
-			footer={<SalesFooterLinks source={source} />}
-		>
+	const form = (
+		<>
 			{isCloud && (
 				<div className="space-y-4 w-full pb-4">
 					<Button
@@ -176,7 +185,7 @@ export function RegisterForm({
 					<Input
 						id="email"
 						type="email"
-						placeholder="you@example.com"
+						placeholder={invite ? "Your invited email address" : "you@example.com"}
 						value={email}
 						onChange={(e) => setEmail(e.target.value)}
 						required
@@ -193,12 +202,12 @@ export function RegisterForm({
 						onChange={(e) => setPassword(e.target.value)}
 						required
 						autoComplete="new-password"
-						minLength={isCloud ? 8 : 6}
+						minLength={isCloud || invite ? 8 : 6}
 					/>
 				</div>
 				{turnstile.widget}
 				<Button type="submit" className="w-full" disabled={loading}>
-					{loading ? "Creating account..." : "Create account"}
+					{loading ? "Creating Account..." : "Create Account"}
 				</Button>
 				<LegalConsentNotice action="creating an account" />
 			</form>
@@ -210,10 +219,33 @@ export function RegisterForm({
 						search={{ ...(returnTo ? { returnTo } : {}), ...attribution }}
 						className="text-primary hover:underline font-medium"
 					>
-						Sign in
+						Sign In
 					</Link>
 				</p>
 			)}
+		</>
+	);
+
+	if (invite) {
+		return (
+			<FullPageCard title="Create Your Elmo Account" subtitle="Use the email address your invitation was created for.">
+				{form}
+			</FullPageCard>
+		);
+	}
+
+	return (
+		<AuthSplitLayout
+			title={isCloud ? "Start tracking your AI visibility" : "Create your admin account"}
+			subtitle={
+				isCloud
+					? `Plans start at $${CLOUD_ENTRY_PRICE_USD}/mo. Cancel any time.`
+					: "This is the owner account for your self-hosted instance."
+			}
+			pitch={<SalesPanel variant={isCloud ? "cloud" : "self-hosted"} source={source} />}
+			footer={<SalesFooterLinks source={source} />}
+		>
+			{form}
 		</AuthSplitLayout>
 	);
 }
