@@ -5,8 +5,8 @@ import { APIError } from "better-auth/api";
 import { captcha, lastLoginMethod } from "better-auth/plugins";
 import { createStripeBillingPlugin } from "../billing/plugin";
 import { isDisposableEmail } from "../disposable-domains";
-import { sendEmail } from "../email";
-import { invitationEmail, passwordResetEmail, verificationEmail } from "../email-templates";
+import { sendEmail, sendOrganizationInvitation } from "../email";
+import { passwordResetEmail, verificationEmail } from "../email-templates";
 
 /**
  * Entries are an exact address ("alice@partner.com"), a whole domain
@@ -110,14 +110,11 @@ export function getCloudAuthOptions(): CreateAuthOptions {
 		extraPlugins: [createStripeBillingPlugin(), lastLoginMethod(), ...(turnstile ? [turnstile] : [])],
 		organizationOptions: {
 			sendInvitationEmail: async (data) => {
-				await sendEmail(
-					data.email,
-					invitationEmail({
-						inviterName: data.inviter.user.name,
-						orgName: data.organization.name,
-						url: `${appUrl}/accept-invitation/${data.id}`,
-					}),
-				);
+				await sendOrganizationInvitation(data.email, {
+					inviterName: data.inviter.user.name,
+					orgName: data.organization.name,
+					url: `${appUrl}/accept-invitation/${data.id}`,
+				});
 			},
 		},
 	};
