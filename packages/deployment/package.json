@@ -15,6 +15,7 @@
 		"./client": "./src/client.ts",
 		"./optimize-button": "./src/optimize-button.tsx",
 		"./billing": "./src/billing/index.ts",
+		"./email": "./src/email.ts",
 		"./auth-hooks/cloud": "./src/auth-hooks/cloud.ts",
 		"./auth-hooks/whitelabel": "./src/auth-hooks/whitelabel.ts"
 	},

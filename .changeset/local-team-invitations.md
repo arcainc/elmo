@@ -3,4 +3,4 @@
 "@workspace/deployment": patch
 ---
 
-Let self-hosted organization admins invite teammates with shareable signup links.
+Let self-hosted organization admins email signup invitations with Resend or share the links directly.

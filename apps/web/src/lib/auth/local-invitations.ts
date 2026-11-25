@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { sendOrganizationInvitation } from "@workspace/deployment/email";
 import { db } from "@workspace/lib/db/db";
 import { invitation } from "@workspace/lib/db/schema";
 import { and, eq, gt } from "drizzle-orm";
@@ -12,6 +13,19 @@ export function createLocalInvitationUrl(invitationId: string, secret: string, a
 	const url = new URL("/auth/register", appUrl);
 	url.hash = `invite=${invitationId}.${signInvitation(invitationId, secret)}`;
 	return url.href;
+}
+
+export async function sendLocalInvitationEmail(
+	email: string,
+	{ inviterName, orgName, url }: { inviterName: string; orgName: string; url: string },
+): Promise<boolean> {
+	try {
+		await sendOrganizationInvitation(email, { inviterName, orgName, url, inviteOnlySignup: true });
+		return true;
+	} catch {
+		console.error("[team] Resend could not send the invitation email");
+		return false;
+	}
 }
 
 export async function canSignUpWithInvitation(token: string, email: string, secret: string): Promise<boolean> {
