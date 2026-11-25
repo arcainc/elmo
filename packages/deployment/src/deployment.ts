@@ -22,7 +22,7 @@ export const FEATURES_BY_MODE: Record<DeploymentMode, FeaturesConfig> = {
 		selfServeSignup: false,
 		billing: false,
 		reportGeneration: true,
-		teamInvites: false,
+		teamInvites: true,
 	},
 	demo: {
 		promotesCloud: true,

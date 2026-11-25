@@ -1,11 +1,14 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getRequestHeaders } from "@tanstack/react-start/server";
+import { isOrgAdminRole } from "@workspace/config/roles";
 import { getDeployment } from "@workspace/deployment";
+import { isEmailConfigured } from "@workspace/deployment/email";
 import { db } from "@workspace/lib/db/db";
 import { invitation, member, organization, user } from "@workspace/lib/db/schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 import { z } from "zod";
 import { requireAuthSession, requireOrganization } from "@/lib/auth/helpers";
+import { createLocalInvitationUrl, sendLocalInvitationEmail } from "@/lib/auth/local-invitations";
 import { auth } from "@/lib/auth/server";
 
 function requireTeamInvites(): void {
@@ -18,6 +21,9 @@ export type TeamData = {
 	members: { id: string; role: string; userId: string; name: string; email: string; createdAt: Date }[];
 	invitations: { id: string; email: string; role: string | null; expiresAt: Date }[];
 	currentUserId: string;
+	canManageTeam: boolean;
+	sharesInviteLinks: boolean;
+	emailsLocalInvites: boolean;
 	organization: { id: string; name: string };
 };
 
@@ -27,6 +33,7 @@ export const listTeamFn = createServerFn({ method: "GET" })
 		requireTeamInvites();
 		const session = await requireAuthSession();
 		const org = await requireOrganization(session.user.id, data.organizationId);
+		const canManageTeam = isOrgAdminRole(org.role);
 
 		const [members, invitations] = await Promise.all([
 			db
@@ -42,24 +49,34 @@ export const listTeamFn = createServerFn({ method: "GET" })
 				.innerJoin(user, eq(member.userId, user.id))
 				.where(eq(member.organizationId, org.id)),
 
-			db
-				.select({
-					id: invitation.id,
-					email: invitation.email,
-					role: invitation.role,
-					expiresAt: invitation.expiresAt,
-				})
-				.from(invitation)
-				.where(and(eq(invitation.organizationId, org.id), eq(invitation.status, "pending"))),
+			canManageTeam
+				? db
+						.select({
+							id: invitation.id,
+							email: invitation.email,
+							role: invitation.role,
+							expiresAt: invitation.expiresAt,
+						})
+						.from(invitation)
+						.where(and(eq(invitation.organizationId, org.id), eq(invitation.status, "pending")))
+				: [],
 		]);
 
 		return {
 			members,
 			invitations,
 			currentUserId: session.user.id,
+			canManageTeam,
+			sharesInviteLinks: getDeployment().mode === "local",
+			emailsLocalInvites: getDeployment().mode === "local" && isEmailConfigured(),
 			organization: { id: org.id, name: org.name },
 		};
 	});
+
+async function localInvitationUrl(invitationId: string): Promise<string> {
+	const { secret, baseURL } = await auth.$context;
+	return createLocalInvitationUrl(invitationId, secret, baseURL);
+}
 
 export const inviteTeamMemberFn = createServerFn({ method: "POST" })
 	.validator(
@@ -74,12 +91,64 @@ export const inviteTeamMemberFn = createServerFn({ method: "POST" })
 		const session = await requireAuthSession();
 		const org = await requireOrganization(session.user.id, data.organizationId);
 
-		await auth.api.createInvitation({
+		const created = await auth.api.createInvitation({
 			body: { email: data.email, role: data.role, organizationId: org.id },
 			headers: getRequestHeaders(),
 		});
 
-		return { success: true };
+		if (getDeployment().mode !== "local") return { id: created.id, inviteUrl: null, emailSent: null };
+
+		const url = await localInvitationUrl(created.id);
+		if (!isEmailConfigured()) return { id: created.id, inviteUrl: url, emailSent: null };
+
+		// Better Auth logs invitation email failures without returning them to the caller.
+		const emailSent = await sendLocalInvitationEmail(created.email, {
+			inviterName: session.user.name,
+			orgName: org.name,
+			url,
+		});
+		return { id: created.id, inviteUrl: emailSent ? null : url, emailSent };
+	});
+
+const pendingInvitationInput = z.object({ organizationId: z.string(), invitationId: z.string() });
+
+async function requirePendingLocalInvitation(data: z.infer<typeof pendingInvitationInput>) {
+	requireTeamInvites();
+	if (getDeployment().mode !== "local") throw new Error("Shareable invitations are only available in self-hosted Elmo");
+	const session = await requireAuthSession();
+	const org = await requireOrganization(session.user.id, data.organizationId);
+	if (!isOrgAdminRole(org.role)) throw new Error("Only organization admins can manage invitations");
+
+	const [pending] = await db
+		.select({ id: invitation.id, email: invitation.email })
+		.from(invitation)
+		.where(
+			and(
+				eq(invitation.id, data.invitationId),
+				eq(invitation.organizationId, org.id),
+				eq(invitation.status, "pending"),
+				gt(invitation.expiresAt, new Date()),
+			),
+		)
+		.limit(1);
+	if (!pending) throw new Error("This invitation is no longer available");
+	return { pending, orgName: org.name, inviterName: session.user.name, url: await localInvitationUrl(pending.id) };
+}
+
+export const getShareableInvitationLinkFn = createServerFn({ method: "POST" })
+	.validator(pendingInvitationInput)
+	.handler(async ({ data }) => {
+		const { url } = await requirePendingLocalInvitation(data);
+		return { inviteUrl: url };
+	});
+
+export const resendInvitationFn = createServerFn({ method: "POST" })
+	.validator(pendingInvitationInput)
+	.handler(async ({ data }) => {
+		const { pending, orgName, inviterName, url } = await requirePendingLocalInvitation(data);
+		if (!isEmailConfigured()) throw new Error("Invitation email is not configured");
+		const emailSent = await sendLocalInvitationEmail(pending.email, { inviterName, orgName, url });
+		return { emailSent };
 	});
 
 export const cancelInvitationFn = createServerFn({ method: "POST" })
